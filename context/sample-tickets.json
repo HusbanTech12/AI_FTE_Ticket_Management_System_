@@ -1,0 +1,60 @@
+[
+  {
+    "id": "t1",
+    "channel": "email",
+    "from": "alice@example.com",
+    "subject": "How do I reset my password?",
+    "body": "Hi, I forgot my password and cannot log in. Can you help me reset it?",
+    "timestamp": "2026-04-07T10:15:00Z",
+    "metadata": {
+      "email_thread_id": "thread-123"
+    }
+  },
+  {
+    "id": "t2",
+    "channel": "whatsapp",
+    "from": "+15551234567",
+    "body": "Can you show me how to integrate Slack?",
+    "timestamp": "2026-04-07T11:05:12Z",
+    "metadata": {
+      "whatsapp_sid": "SM12345"
+    }
+  },
+  {
+    "id": "t3",
+    "channel": "web_form",
+    "name": "Bob Builder",
+    "email": "bob@builderco.com",
+    "subject": "Billing question",
+    "body": "I was charged twice for the Professional plan this month. Please help.",
+    "timestamp": "2026-04-07T12:30:45Z",
+    "metadata": {}
+  },
+  {
+    "id": "t4",
+    "channel": "email",
+    "from": "carol@company.com",
+    "subject": "Feature request: Gantt charts",
+    "body": "It would be great to have Gantt chart visualization for project timelines.",
+    "timestamp": "2026-04-07T13:20:00Z",
+    "metadata": {}
+  },
+  {
+    "id": "t5",
+    "channel": "whatsapp",
+    "from": "+15559876543",
+    "body": "I need to export all my data. How can I do that?",
+    "timestamp": "2026-04-07T14:45:30Z",
+    "metadata": {}
+  },
+  {
+    "id": "t6",
+    "channel": "web_form",
+    "name": "Dana",
+    "email": "dana@example.org",
+    "subject": "Cannot connect my Google Drive",
+    "body": "I tried linking Google Drive but it says authentication failed.",
+    "timestamp": "2026-04-07T15:10:22Z",
+    "metadata": {}
+  }
+]

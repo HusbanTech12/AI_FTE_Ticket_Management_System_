@@ -1,0 +1,10 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(python incubation/src/agent/prototype_agent.py)",
+      "Bash(python3 incubation/src/agent/prototype_agent.py)",
+      "Bash(npm run dev)",
+      "Bash(npm install)"
+    ]
+  }
+}

@@ -1,0 +1,48 @@
+---
+# Ingress for exposing API to the internet (optional)
+# Use this with an Ingress Controller (nginx, traefik, etc.)
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: fte-api-ingress
+  namespace: customer-success-fte
+  annotations:
+    # nginx ingress annotations (adjust based on your ingress controller)
+    kubernetes.io/ingress.class: "nginx"
+    cert-manager.io/cluster-issuer: "letsencrypt-prod"  # If using cert-manager for TLS
+    nginx.ingress.kubernetes.io/rewrite-target: /
+spec:
+  tls:
+    - hosts:
+        - api.flowsync-support.com
+      secretName: fte-api-tls
+  rules:
+    - host: api.flowsync-support.com
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: fte-api-service
+                port:
+                  number: 8000
+
+---
+# Alternative: Port-forward service for local development
+# Not needed for production but useful for debugging
+apiVersion: v1
+kind: Service
+metadata:
+  name: fte-api-external
+  namespace: customer-success-fte
+  annotations:
+    metallb.universe.tf/address-pool: "public-ips"  # If using MetalLB
+spec:
+  selector:
+    app: fte-api
+  ports:
+    - name: http
+      port: 80
+      targetPort: 8000
+  type: LoadBalancer  # Assumes you have a cloud provider's LoadBalancer integration

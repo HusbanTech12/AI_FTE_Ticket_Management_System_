@@ -1,0 +1,170 @@
+version: '3.8'
+
+services:
+  # PostgreSQL Database with pgvector extension
+  postgres:
+    image: pgvector/pgvector:pg15
+    container_name: fte-postgres
+    environment:
+      POSTGRES_USER: fte
+      POSTGRES_PASSWORD: fte_password
+      POSTGRES_DB: fte_db
+      POSTGRES_INITDB_ARGS: "--encoding=UTF-8"
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./production/database/migrations:/docker-entrypoint-initdb.d  # Run migrations on init
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U fte"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - fte-network
+
+  # Kafka + Zookeeper
+  zookeeper:
+    image: confluentinc/cp-zookeeper:7.5.0
+    container_name: fte-zookeeper
+    environment:
+      ZOOKEEPER_CLIENT_PORT: 2181
+      ZOOKEEPER_TICK_TIME: 2000
+    ports:
+      - "2181:2181"
+    networks:
+      - fte-network
+
+  kafka:
+    image: confluentinc/cp-kafka:7.5.0
+    container_name: fte-kafka
+    depends_on:
+      - zookeeper
+    ports:
+      - "9092:9092"
+      - "29092:29092"
+    environment:
+      KAFKA_BROKER_ID: 1
+      KAFKA_ZOOKEEPER_CONNECT: zookeeper:2181
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:9092,PLAINTEXT_HOST://localhost:29092
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT,PLAINTEXT_HOST:PLAINTEXT
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: "true"
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_LOG_RETENTION_HOURS: 168  # 7 days
+    healthcheck:
+      test: ["CMD-SHELL", "kafka-topics --bootstrap-server localhost:9092 --list"]
+      interval: 10s
+      timeout: 10s
+      retries: 10
+    networks:
+      - fte-network
+
+  # FastAPI Application
+  fte-api:
+    build:
+      context: .
+      dockerfile: production/Dockerfile
+    container_name: fte-api
+    depends_on:
+      postgres:
+        condition: service_healthy
+      kafka:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: "postgresql://fte:fte_password@postgres:5432/fte_db"
+      KAFKA_BOOTSTRAP_SERVERS: "kafka:9092"
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      GMAIL_CREDENTIALS_PATH: "/secrets/gmail-credentials.json"
+      TWILIO_ACCOUNT_SID: "${TWILIO_ACCOUNT_SID}"
+      TWILIO_AUTH_TOKEN: "${TWILIO_AUTH_TOKEN}"
+      TWILIO_WHATSAPP_NUMBER: "${TWILIO_WHATSAPP_NUMBER}"
+      PORT: "8000"
+      LOG_LEVEL: "INFO"
+      DEBUG: "false"
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./secrets:/secrets:ro  # Mount secrets as read-only
+    command: >
+      sh -c "
+        echo 'Waiting for dependencies...' &&
+        sleep 10 &&
+        uvicorn api.main:app --host 0.0.0.0 --port ${PORT:-8000} --log-level info
+      "
+    networks:
+      - fte-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+    restart: unless-stopped
+
+  # Message Processor Worker
+  fte-worker:
+    build:
+      context: .
+      dockerfile: production/Dockerfile
+    container_name: fte-worker
+    depends_on:
+      postgres:
+        condition: service_healthy
+      kafka:
+        condition: service_healthy
+      fte-api:
+        condition: service_started
+    environment:
+      DATABASE_URL: "postgresql://fte:fte_password@postgres:5432/fte_db"
+      KAFKA_BOOTSTRAP_SERVERS: "kafka:9092"
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      GMAIL_CREDENTIALS_PATH: "/secrets/gmail-credentials.json"
+      TWILIO_ACCOUNT_SID: "${TWILIO_ACCOUNT_SID}"
+      TWILIO_AUTH_TOKEN: "${TWILIO_AUTH_TOKEN}"
+      LOG_LEVEL: "INFO"
+    volumes:
+      - ./secrets:/secrets:ro
+    command: >
+      sh -c "
+        echo 'Waiting for Kafka...' &&
+        sleep 10 &&
+        python workers/message_processor.py
+      "
+    networks:
+      - fte-network
+    restart: unless-stopped
+    deploy:
+      replicas: 2  # Run 2 workers for HA (can scale)
+
+  # Frontend Web Form
+  fte-frontend:
+    build:
+      context: ./frontend/web-form
+      dockerfile: Dockerfile
+    container_name: fte-frontend
+    depends_on:
+      - fte-api
+    environment:
+      NEXT_PUBLIC_API_URL: "http://fte-api:8000"
+      PORT: "3000"
+    ports:
+      - "3000:3000"
+    networks:
+      - fte-network
+    restart: unless-stopped
+
+networks:
+  fte-network:
+    driver: bridge
+
+volumes:
+  postgres_data:
+    driver: local
+
+networks:
+  fte-network:
+    driver: bridge
+
+volumes:
+  postgres_data:
+    driver: local

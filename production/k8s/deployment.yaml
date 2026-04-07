@@ -1,0 +1,269 @@
+---
+# FTE API Deployment (FastAPI)
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: fte-api
+  namespace: customer-success-fte
+  labels:
+    app: fte-api
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: fte-api
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 0
+  template:
+    metadata:
+      labels:
+        app: fte-api
+    spec:
+      initContainers:
+        - name: wait-for-dependencies
+          image: busybox
+          command: ['sh', '-c']
+          args:
+            - |
+              echo "Waiting for PostgreSQL...";
+              while ! nc -z postgres 5432; do sleep 2; echo "Waiting for DB..."; done;
+              echo "PostgreSQL ready!";
+              echo "Waiting for Kafka...";
+              while ! nc -z kafka 9092; do sleep 2; echo "Waiting for Kafka..."; done;
+              echo "Kafka ready!";
+      containers:
+        - name: fte-api
+          image: fte-api:latest
+          ports:
+            - containerPort: 8000
+          envFrom:
+            - configMapRef:
+                name: fte-config
+            - secretRef:
+                name: fte-secrets
+          resources:
+            requests:
+              cpu: "200m"
+              memory: "256Mi"
+            limits:
+              cpu: "500m"
+              memory: "512Mi"
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 8000
+            initialDelaySeconds: 30
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 3
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 8000
+            initialDelaySeconds: 60
+            periodSeconds: 15
+            timeoutSeconds: 5
+            failureThreshold: 5
+          volumeMounts:
+            - name: gmail-credentials
+              mountPath: /secrets
+              readOnly: true
+      volumes:
+        - name: gmail-credentials
+          secret:
+            secretName: fte-gmail-secret
+            optional: true
+
+---
+# FTE API Service (exposes API internally and via Ingress)
+apiVersion: v1
+kind: Service
+metadata:
+  name: fte-api-service
+  namespace: customer-success-fte
+  labels:
+    app: fte-api
+spec:
+  selector:
+    app: fte-api
+  ports:
+    - name: http
+      port: 8000
+      targetPort: 8000
+  type: ClusterIP
+
+---
+# Message Processor Worker Deployment
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: fte-worker
+  namespace: customer-success-fte
+  labels:
+    app: fte-worker
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: fte-worker
+  template:
+    metadata:
+      labels:
+        app: fte-worker
+    spec:
+      initContainers:
+        - name: wait-for-dependencies
+          image: busybox
+          command: ['sh', '-c']
+          args:
+            - |
+              echo "Waiting for PostgreSQL...";
+              while ! nc -z postgres 5432; do sleep 2; done;
+              echo "PostgreSQL ready!";
+              echo "Waiting for Kafka...";
+              while ! nc -z kafka 9092; do sleep 2; done;
+              echo "Kafka ready!";
+      containers:
+        - name: fte-worker
+          image: fte-api:latest
+          command: ["python", "workers/message_processor.py"]
+          envFrom:
+            - configMapRef:
+                name: fte-config
+            - secretRef:
+                name: fte-secrets
+          resources:
+            requests:
+              cpu: "300m"
+              memory: "300Mi"
+            limits:
+              cpu: "1"
+              memory: "512Mi"
+          volumeMounts:
+            - name: gmail-credentials
+              mountPath: /secrets
+              readOnly: true
+      volumes:
+        - name: gmail-credentials
+          secret:
+            secretName: fte-gmail-secret
+            optional: true
+
+---
+# Kafka Service (internal)
+apiVersion: v1
+kind: Service
+metadata:
+  name: kafka
+  namespace: customer-success-fte
+  labels:
+    app: kafka
+spec:
+  ports:
+    - port: 9092
+      targetPort: 9092
+  clusterIP: None
+  selector:
+    app: kafka
+
+---
+# Zookeeper Service
+apiVersion: v1
+kind: Service
+metadata:
+  name: zookeeper
+  namespace: customer-success-fte
+spec:
+  ports:
+    - port: 2181
+      targetPort: 2181
+  clusterIP: None
+  selector:
+    app: zookeeper
+
+---
+# Zookeeper StatefulSet
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: zookeeper
+  namespace: customer-success-fte
+spec:
+  serviceName: zookeeper
+  replicas: 1
+  selector:
+    matchLabels:
+      app: zookeeper
+  template:
+    metadata:
+      labels:
+        app: zookeeper
+    spec:
+      containers:
+        - name: zookeeper
+          image: confluentinc/cp-zookeeper:7.5.0
+          ports:
+            - containerPort: 2181
+          env:
+            - name: ZOOKEEPER_CLIENT_PORT
+              value: "2181"
+            - name: ZOOKEEPER_TICK_TIME
+              value: "2000"
+          resources:
+            requests:
+              cpu: "100m"
+              memory: "256Mi"
+            limits:
+              cpu: "200m"
+              memory: "512Mi"
+
+---
+# Kafka StatefulSet
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: kafka
+  namespace: customer-success-fte
+spec:
+  serviceName: kafka
+  replicas: 1
+  selector:
+    matchLabels:
+      app: kafka
+  template:
+    metadata:
+      labels:
+        app: kafka
+    spec:
+      containers:
+        - name: kafka
+          image: confluentinc/cp-kafka:7.5.0
+          ports:
+            - containerPort: 9092
+          env:
+            - name: KAFKA_BROKER_ID
+              value: "1"
+            - name: KAFKA_ZOOKEEPER_CONNECT
+              value: "zookeeper:2181"
+            - name: KAFKA_ADVERTISED_LISTENERS
+              value: "PLAINTEXT://kafka.customersuccessfte.svc.cluster.local:9092"
+            - name: KAFKA_AUTO_CREATE_TOPICS_ENABLE
+              value: "true"
+            - name: KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR
+              value: "1"
+          resources:
+            requests:
+              cpu: "200m"
+              memory: "512Mi"
+            limits:
+              cpu: "500m"
+              memory: "1Gi"
+          readinessProbe:
+            exec:
+              command: ["bash", "-c", "kafka-broker-api-versions --bootstrap-server localhost:9092"]
+            initialDelaySeconds: 30
+            periodSeconds: 15
+            timeoutSeconds: 10
